@@ -52,6 +52,7 @@ int main (int argc, char ** argv) {
 
 		/* --- get frame ---*/
 		video >> frame;
+
 		fist.update (frame);
 
 

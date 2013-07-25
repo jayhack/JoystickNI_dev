@@ -1,0 +1,2 @@
+data/inside.jpg
+data/outside.jpg
