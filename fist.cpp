@@ -1,6 +1,7 @@
 #include "opencv2/objdetect/objdetect.hpp"
 #include "opencv2/highgui/highgui.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
+#include "opencv2/ml/ml.hpp"
 
 #include <iostream>
 #include <stdio.h>
@@ -21,39 +22,6 @@ using namespace cv;
 #define GAUSSIAN_BLUR_SIGMA_X 2
 
 #define NUM_FRAMES_IN_BG_MODEL 20
-
-/*########################################################################################################################*/
-/*###################################[ --- CONSTRUCTOR/DESTRUCTOR --- ]###################################################*/
-/*########################################################################################################################*/
-/* Function: constructor 
- * ---------------------
- * initializes all values 
- */
-Fist::Fist () {}
-Fist::Fist (Mat frame) {
-
- 	cout << "--- Fist: Constructor ----" << endl;
-
- 	/*--- image sizes ---*/
- 	raw_size = Size(frame.cols, frame.rows);
- 	reduced_size = Size(raw_size.width/SIZE_REDUCTION_CONST, raw_size.height/SIZE_REDUCTION_CONST);
-
- 	cout << "	- raw size width, height: " << raw_size.width << ", " << raw_size.height << endl;
-	cout << "	- reduced size width, height: " << reduced_size.width << ", " << reduced_size.height << endl;;
-
-
-	/*--- background model initialization ---*/
-	background_totals = Mat(reduced_size, CV_32FC3);
-	background_model = Mat (reduced_size, CV_8UC3);
-
- 	/*--- fist existence/location ---*/
- 	fist_exists = false;
- 	num_frames_seen = 0;
- 	center = Point (-1, -1);
-
- }
-
-
 
 
 
@@ -79,6 +47,92 @@ bool Fist::background_model_set () {
 	else return true;
 }
 
+/* Function: get_histogram_representation
+ * ------------------------
+ * given an image of dimensions 40*30, this will return a vector of mats that are its histogram
+ */
+Mat get_histogram_representation (Mat image) {
+
+ 	/*### Step 1: Split the image into b/g/r planes ###*/
+	vector<Mat> bgr_planes;
+	split (image, bgr_planes);
+	
+
+	/*### Step 2: calculate the histograms ###*/
+  	int histSize = 256; 					//number of bins in histogram
+	float range[] = { 0, 256 }; 			//ranges for b,g,r
+	const float* histRange = { range };		
+
+	bool uniform = true; 					//it is uniform
+	bool accumulate = false;				//it does not accumulate
+	Mat b_hist, g_hist, r_hist;
+
+	calcHist( &bgr_planes[0], 1, 0, Mat(), b_hist, 1, &histSize, &histRange, uniform, accumulate );
+	calcHist( &bgr_planes[1], 1, 0, Mat(), g_hist, 1, &histSize, &histRange, uniform, accumulate );
+	calcHist( &bgr_planes[2], 1, 0, Mat(), r_hist, 1, &histSize, &histRange, uniform, accumulate );
+
+	/*### join all 3 channels into a long row vector... ###*/
+	Mat total_histogram;
+	transpose (b_hist, b_hist);
+	transpose (g_hist, g_hist);
+	transpose (r_hist, r_hist);
+	hconcat (b_hist, g_hist, total_histogram);
+	hconcat (total_histogram, r_hist, total_histogram);
+
+	return total_histogram;
+
+
+ }
+
+
+
+
+/*########################################################################################################################*/
+/*###################################[ --- CONSTRUCTOR/DESTRUCTOR --- ]###################################################*/
+/*########################################################################################################################*/
+/* Function: constructor 
+ * ---------------------
+ * initializes all values 
+ */
+Fist::Fist () {}
+Fist::Fist (Mat frame, char* svm_location) {
+
+ 	cout << "--- Fist: Constructor ----" << endl;
+
+ 	/*--- load context_svm ---*/
+ 	context_svm = new CvSVM;
+ 	context_svm->load (svm_location);
+
+ 	/*--- determine image dimensions ---*/
+ 	raw_size = Size(frame.cols, frame.rows);
+ 	reduced_size = Size(raw_size.width/SIZE_REDUCTION_CONST, raw_size.height/SIZE_REDUCTION_CONST);
+ 	cout << "	- raw size width, height: " << raw_size.width << ", " << raw_size.height << endl;
+	cout << "	- reduced size width, height: " << reduced_size.width << ", " << reduced_size.height << endl;
+
+	/*--- determine our current context ---*/
+	preprocess (frame); //current_frame now has the resized version
+	Mat histogram_rep = get_histogram_representation(current_frame);
+	if (context_svm->predict (histogram_rep) == 1) is_outside = true;
+	else is_outside = false;
+	cout << "	- is_outside = " << is_outside << endl;
+
+
+
+
+	/*--- background model initialization ---*/
+	background_totals = Mat(reduced_size, CV_32FC3);
+	background_model = Mat (reduced_size, CV_8UC3);
+
+
+ 	/*--- fist existence/location ---*/
+ 	fist_exists = false;
+ 	num_frames_seen = 0;
+ 	center = Point (-1, -1);
+
+
+ }
+
+
 
 
 /*########################################################################################################################*/
@@ -86,10 +140,10 @@ bool Fist::background_model_set () {
 /*########################################################################################################################*/
 /* Function: get_abs_diff
  * ----------------------
- * this function will get the abs_diff image current_frame and background_model
+ * gets absolute difference between background_model and current frame
+ * results ---> abs_diff
  */
 void Fist::get_abs_diff () {
-	Mat difference;
 	absdiff (background_model, current_frame, abs_diff);
 	cvtColor (abs_diff, abs_diff, CV_BGR2GRAY);
 }
@@ -98,33 +152,33 @@ void Fist::get_abs_diff () {
 /* Function: get_canny_edges
  * -------------------------
  * gets the edges from the current_frame
+ * results ---> canny_edges
  */
 void Fist::get_canny_edges () {
 	
 	/*### blur the image ###*/
-	blur (current_frame, edges, Size(3, 3));
+	blur (current_frame, canny_edges, Size(3, 3));
 
 	/*### then run canny edge detection on it ###*/
-	Canny(current_frame, edges, 50, 150, 3);
-
+	Canny(current_frame, canny_edges, 50, 150, 3);
 }
 
 
 /* Function: get_edges_diff
  * ------------------------
- * finds the diff between edges in current_frame and in the background 
- * model
+ * finds the diff between edges in current_frame and in the background model
+ * results ---> edges_abs_diff
  */
- void Fist::get_edges_diff () {
- 	edges.convertTo (edges, CV_8UC1);
- 	background_edges.convertTo(background_edges, CV_8UC1);
+void Fist::get_edges_diff () {
+ 	canny_edges.convertTo (canny_edges, CV_8UC1);
+ 	background_canny_edges.convertTo(background_canny_edges, CV_8UC1);
 
  	Mat background_edges_blurred, edges_blurred;
- 	blur (edges, edges_blurred, Size(3, 3));
- 	blur (background_edges, background_edges_blurred, Size(3, 3));
+ 	blur (canny_edges, edges_blurred, Size(3, 3));
+ 	blur (background_canny_edges, background_edges_blurred, Size(3, 3));
 
  	absdiff (edges_blurred, background_edges_blurred, edges_abs_diff);
- }
+}
 	
 
 
@@ -145,10 +199,10 @@ void Fist::update_background_model () {
 	background_totals.convertTo (background_model, CV_8UC3, 1/((float)num_frames_seen));
 
 	/*### blur the image ###*/
-	blur (background_model, background_edges, Size(3, 3));
+	blur (background_model, background_canny_edges, Size(3, 3));
 
 	/*### then run canny edge detection on it ###*/
-	Canny(background_edges, background_edges, 50, 150, 3);
+	Canny(background_canny_edges, background_canny_edges, 50, 150, 3);
 }
 
 
@@ -167,65 +221,69 @@ void Fist::preprocess (Mat raw_frame) {
 }
 
 
+
+/* Function: udpdate_outside
+ * -------------------------
+ * update for outside context
+ * might have to train for fist color when outside... shouldn't be too hard though?
+ * can't you just calculate p(in fist) for each pixel in the image here, or something like it?
+ * you aren't dealing with as much outside shit as you are otherwise
+ */
+void Fist::update_outside () {
+
+	Mat hsv_mat, skin_mat;
+	cvtColor(current_frame, hsv_mat, COLOR_BGR2HSV);
+    inRange(hsv_mat, Scalar(0, 10, 60), Scalar(20, 150, 255), skin_mat);    //these parameters work MUCH better than (0, 10, 60) and (20, 150, 255)
+
+    resize (skin_mat, skin_mat, raw_size);
+    imshow ("Skin", skin_mat);
+    int key = 0;
+    while (key != 'q')
+    	key = waitKey(30);
+
+}
+
+/* Function: update_inside
+ * -----------------------
+ * update for inside context
+ */
+void Fist::update_inside () {
+
+	get_abs_diff ();		//absolute difference between images
+	get_canny_edges ();		//canny edge detection
+	get_edges_diff ();		//edges difference
+
+	resize (edges_abs_diff, edges_abs_diff, raw_size);
+	resize (abs_diff, abs_diff, raw_size);
+	imshow ("edges_diff", edges_abs_diff);
+	imshow ("abs_diff", abs_diff);
+
+	int key = 0;
+	while (key != 'q') 
+		key = waitKey (30);
+}
+
+
+/* Function: update
+ * ----------------
+ * preprocesses, updates background model (if appropriate), then otherwise 
+ * calls functions to update appropriately given the context
+ */
 void Fist::update (Mat raw_frame) {
 
 	/*### Step 1: preprocess the frame (downsize, etc) ###*/
 	preprocess (raw_frame);
 
-	/*### Step 2: add the frame to the background model if appropriate ###*/
+	/*### Step 2: add the frame to the background model if appropriate, otherwise update ###*/
 	if (!background_model_set ()) {
 		update_background_model ();
 	}
-
-
-	/*### Step 3: otherwisefind the absdiff with the background model ###*/
 	else {
-
-		// get_abs_diff ();		//absolute difference between images
-		// get_canny_edges ();		//canny edge detection
-		// get_edges_diff ();		//edges difference
-
-		// resize (abs_diff, abs_diff, raw_size);
-		// imshow ("frame", abs_diff);
-
-		/*### experiment for outside: get edges + contours ###*/
-		// get_canny_edges ();
-		get_abs_diff ();
-		// blur (abs_diff, abs_diff, Size(3, 3));
-		/*### then run canny edge detection on it ###*/
-		Canny(abs_diff, edges, 50, 150, 3);
-
-
-		vector <vector <Point> > contours;
-		vector<Vec4i> hierarchy;
-
-
-		RNG rng(12345);
-
-  		findContours(edges, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0) );
-  		Mat drawing = Mat::zeros(edges.size(), CV_8UC3);
-  		for( int i = 0; i< contours.size(); i++ )
-     	{
-       		Scalar color = Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
-       		drawContours( drawing, contours, i, color, 2, 8, hierarchy, 0, Point() );
-     	}
-
-     	resize (drawing, drawing, raw_size);
-     	imshow ("contours", drawing);
-
-		// resize (edges_abs_diff, edges_abs_diff, raw_size);
-		// Mat background_edges_display, edges_display, diff_display;
-		// resize (background_edges, background_edges_display, raw_size);
-		// resize (edges, edges_display, raw_size);
-		// resize (edges_abs_diff, diff_display, raw_size);
-
-		int key = 0;
-		while (key != 'q')
-			key = waitKey(30);
-
+		if (outside ()) update_outside ();
+		else update_inside ();
 	}
 
-
+	/*### Step 3: update the number of frames seen ###*/
 	num_frames_seen++;
 }
 
@@ -237,7 +295,7 @@ void Fist::update (Mat raw_frame) {
 
 
 /*########################################################################################################################*/
-/*###################################[ --- GETTERS/SETTERS --- ]##########################################################*/
+/*###################################[ --- GETTERS/SETTERS/INDICATORS --- ]###############################################*/
 /*########################################################################################################################*/
 /* Getter: get_center
  * ------------------
@@ -246,3 +304,23 @@ void Fist::update (Mat raw_frame) {
 Point Fist::get_center () {
 	return center;
 }
+
+
+/* Indicator: fist_exists
+ * ----------------------
+ * returns wether the fist is detected on the screen
+ */
+bool Fist::fist () {
+	return fist_exists;
+}
+
+/* Function: outside
+ * -----------------
+ * returns wether the scene is outside or not
+ */
+bool Fist::outside () {
+	return is_outside;
+}
+
+
+

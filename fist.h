@@ -4,6 +4,7 @@
 #include "opencv2/objdetect/objdetect.hpp"
 #include "opencv2/highgui/highgui.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
+#include "opencv2/ml/ml.hpp"
 
 #include <iostream>
 #include <stdio.h>
@@ -33,11 +34,17 @@ private:
 	Mat 	background_totals;
 	Mat		background_model;
 
-	Mat 	background_edges;
-	Mat 	edges;
-
+	/*--- edges ---*/
+	Mat 	background_canny_edges;
+	Mat 	canny_edges;
+	/*--- diff w/ background model ---*/	
 	Mat 	abs_diff;
 	Mat		edges_abs_diff;
+
+
+	/*--- Context Classification ---*/
+	CvSVM *context_svm;
+	bool is_outside;
 
 
 	/*--- Utilities ---*/
@@ -56,15 +63,19 @@ public:
 
 	/*--- constructors/destructors ---*/
 	Fist ();
-	Fist (Mat frame);
+	Fist (Mat frame, char* svm_location);
 
 
 	/*--- updating the fist ---*/
 	void preprocess (Mat raw_frame);
+	void update_inside ();
+	void update_outside ();
 	void update (Mat raw_frame);
 
 	/*--- getters/setters ---*/
 	Point get_center ();
+	bool fist ();
+	bool outside ();
 
 
 

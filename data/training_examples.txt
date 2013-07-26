@@ -1,0 +1,9 @@
+images/outside/1.jpg
+images/outside/2.jpg
+images/outside/3.jpg
+images/outside/4.jpg
+images/inside/1.jpg
+images/inside/2.jpg
+images/inside/3.jpg
+images/inside/4.jpg
+images/inside/5.jpg

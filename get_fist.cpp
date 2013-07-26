@@ -44,38 +44,15 @@ int main (int argc, char ** argv) {
 	/*### create the fist object ###*/
 	Mat frame;
 	video >> frame;
-	Fist fist (frame);
+	Fist fist (frame, "data/classifiers/context_svm.xml");
 
 
 	/*### Start working with frames ###*/
 	while (true) {
 
-		/* --- get frame ---*/
+		/* --- get frame and update ---*/
 		video >> frame;
-
 		fist.update (frame);
-
-
-
-
-		// /*### Step 2: convert to grayscale ###*/
-		// Mat grayscale;
-		// cvtColor (frame_small, grayscale, CV_BGR2GRAY);
-
-		// /*### Step 3: blur ###*/
-		// Mat blurred;
-		// blur (grayscale, blurred, GAUSSIAN_BLUR_KERNEL);
-
-
-		// ### Step 4: canny edge detection ###
-		// Canny (blurred, edges, 20, 60, 5);
-
-
-		// /*### Step 3: size back up and display ###*/
-		// resize (blurred, frame, original_size);
-		// imshow ("frame", frame);
-		// int key = waitKey (30);
-		// if (key == 'q') break;
 
 	}
 

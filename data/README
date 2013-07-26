@@ -1,0 +1,6 @@
+--- DATA/CLASSIFIERS README ---
+
+- when you add new video data, put it in vids/inside or vids/outside, as appropriate
+- run ./convert_vids.py, which will get images from the videos and put them in the correct locations
+- run ./get_training_data.py, which will appropriately fill in training_examples.txt/training_data.txt
+- run ./train_context_classifier, which will train/save the classifier
